@@ -390,6 +390,13 @@
   .community-score-chip .cs-rate { color: var(--yellow); }
   .community-score-chip .cs-mode { color: var(--muted); font-size: 0.64rem; }
   .lb-mode-chip { font-size: 0.65rem; color: var(--muted); background: var(--bg); border: 1px solid var(--border); border-radius: 2px; padding: 1px 4px; white-space: nowrap; }
+  /* Practice stats strip */
+  #practice-stats-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 5px 10px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 0.68rem; }
+  .pstat { display: flex; align-items: baseline; gap: 4px; }
+  .pstat-label { color: var(--muted); text-transform: uppercase; font-size: 0.6rem; letter-spacing: 0.4px; }
+  .pstat-val { color: var(--green); font-weight: bold; }
+  .pstat-streak { color: var(--yellow) !important; }
+  .pstat-sep { color: var(--border); }
   /* Manage tab */
   .lb-manage-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; }
   .lb-manage-selall { display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 0.75rem; color: var(--muted); user-select: none; }
@@ -953,6 +960,9 @@
           </optgroup>
         </select>
       </div>
+
+      <!-- Practice stats strip -->
+      <div id="practice-stats-bar"></div>
 
       <!-- Tabs -->
       <div class="lb-tabs">
@@ -24405,6 +24415,66 @@ function buildEntry(rate, correct, total, wpm, durSec) {
   };
 }
 
+// ── Practice stats strip ──────────────────────────────────────
+// Shown above the leaderboard tabs. Aggregates ALL categories.
+function renderPracticeStats() {
+  const el = $('practice-stats-bar');
+  if (!el) return;
+
+  const hist = loadHistory();
+  const allSessions = [];
+  Object.values(hist).forEach(entries => {
+    (entries || []).forEach(e => { if (e.ts && e.dur > 0) allSessions.push(e); });
+  });
+
+  if (!allSessions.length) { el.innerHTML = ''; return; }
+
+  const now    = Date.now();
+  const DAY_MS = 86400000;
+
+  // 30-day average (includes zero days)
+  const cutoff30   = now - 30 * DAY_MS;
+  const sec30      = allSessions.filter(e => e.ts >= cutoff30).reduce((s, e) => s + e.dur, 0);
+  const avg30      = sec30 / 30;
+
+  // Active-day average (only days with sessions)
+  const daySet = new Set(allSessions.map(e => new Date(e.ts).toDateString()));
+  const secAll = allSessions.reduce((s, e) => s + e.dur, 0);
+  const avgActive = secAll / daySet.size;
+
+  // Current streak
+  const sortedDays = [...daySet]
+    .map(d => new Date(d))
+    .sort((a, b) => b - a);
+  let streak = 0;
+  const todayStr     = new Date().toDateString();
+  const yesterdayStr = new Date(now - DAY_MS).toDateString();
+  if (sortedDays.length && (sortedDays[0].toDateString() === todayStr || sortedDays[0].toDateString() === yesterdayStr)) {
+    let cursor = new Date(sortedDays[0]);
+    for (const d of sortedDays) {
+      if (d.toDateString() === cursor.toDateString()) {
+        streak++;
+        cursor = new Date(cursor.getTime() - DAY_MS);
+      } else break;
+    }
+  }
+
+  function fmtMin(secs) {
+    if (secs < 60) return Math.round(secs) + 's';
+    const m = Math.floor(secs / 60), s = Math.round(secs % 60);
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+
+  el.innerHTML =
+    `<span class="pstat"><span class="pstat-label">30d avg</span><span class="pstat-val">${fmtMin(avg30)}/day</span></span>` +
+    `<span class="pstat-sep">·</span>` +
+    `<span class="pstat"><span class="pstat-label">when active</span><span class="pstat-val">${fmtMin(avgActive)}/day</span></span>` +
+    `<span class="pstat-sep">·</span>` +
+    `<span class="pstat"><span class="pstat-label">streak</span><span class="pstat-val pstat-streak">${streak} day${streak !== 1 ? 's' : ''} 🔥</span></span>` +
+    `<span class="pstat-sep">·</span>` +
+    `<span class="pstat"><span class="pstat-label">sessions</span><span class="pstat-val">${allSessions.length}</span></span>`;
+}
+
 // Always call this — saves to history regardless of length
 function recordHistory(category, entry) {
   const hist = loadHistory();
@@ -24549,8 +24619,6 @@ function renderGraph(category) {
 
   const data = hist[category] || [];
 
-  // Match canvas pixel size to display size
-
   if (data.length < 2) {
     ctx.fillStyle = '#888';
     ctx.font = '13px monospace';
@@ -24559,57 +24627,90 @@ function renderGraph(category) {
     return;
   }
 
-  const pad = { top: 20, right: 20, bottom: 36, left: 52 };
-  const gW  = W - pad.left - pad.right;
-  const gH  = H - pad.top  - pad.bottom;
+  // Leave room for right Y-axis (duration) and left Y-axis (rate)
+  const pad  = { top: 28, right: 46, bottom: 36, left: 52 };
+  const gW   = W - pad.left - pad.right;
+  const gH   = H - pad.top  - pad.bottom;
 
   const rates = data.map(d => d.rate);
+  const durs  = data.map(d => (d.dur || 0) / 60); // seconds → minutes
   const minR  = Math.max(0, Math.min(...rates) - 10);
   const maxR  = Math.max(...rates) + 10;
+  const maxD  = Math.max(...durs, 1);
 
   function xPos(i)    { return pad.left + (i / (data.length - 1)) * gW; }
-  function yPos(rate) { return pad.top  + gH - ((rate - minR) / (maxR - minR)) * gH; }
+  function yRate(r)   { return pad.top  + gH - ((r - minR) / (maxR - minR)) * gH; }
+  function yDur(d)    { return pad.top  + gH - (d / maxD) * gH; }
 
-  // Grid lines
+  // ── Duration bars (drawn first, behind everything) ────────────
+  const barW = Math.max(2, (gW / data.length) * 0.55);
+  data.forEach((d, i) => {
+    const mins   = (d.dur || 0) / 60;
+    const x      = xPos(i);
+    const barTop = yDur(mins);
+    const barBot = pad.top + gH;
+    ctx.fillStyle = 'rgba(255,180,0,0.18)';
+    ctx.fillRect(x - barW / 2, barTop, barW, barBot - barTop);
+    ctx.strokeStyle = 'rgba(255,180,0,0.45)';
+    ctx.lineWidth   = 1;
+    ctx.strokeRect(x - barW / 2, barTop, barW, barBot - barTop);
+  });
+
+  // ── Grid lines ────────────────────────────────────────────────
   const steps = 5;
   ctx.strokeStyle = '#2a3a5a';
   ctx.lineWidth   = 1;
   for (let s = 0; s <= steps; s++) {
     const r = minR + ((maxR - minR) * s / steps);
-    const y = yPos(r);
+    const y = yRate(r);
     ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + gW, y); ctx.stroke();
-    ctx.fillStyle   = '#888';
-    ctx.font        = '10px monospace';
-    ctx.textAlign   = 'right';
+    // Left axis: QSOs/hr
+    ctx.fillStyle  = '#888';
+    ctx.font       = '10px monospace';
+    ctx.textAlign  = 'right';
     ctx.fillText(Math.round(r), pad.left - 6, y + 3);
+    // Right axis: minutes
+    const dLabel = Math.round((maxD / steps) * s);
+    ctx.fillStyle = 'rgba(255,180,0,0.7)';
+    ctx.textAlign = 'left';
+    ctx.fillText(dLabel + 'm', pad.left + gW + 5, y + 3);
   }
 
-  // Axis labels
+  // ── X-axis date labels ────────────────────────────────────────
   ctx.fillStyle  = '#888';
   ctx.font       = '10px monospace';
   ctx.textAlign  = 'center';
   const labelEvery = Math.max(1, Math.floor(data.length / 8));
   data.forEach((d, i) => {
-    if (i % labelEvery === 0 || i === data.length - 1) {
+    if (i % labelEvery === 0 || i === data.length - 1)
       ctx.fillText(d.date, xPos(i), H - 6);
-    }
   });
 
-  // Y-axis title
+  // ── Left Y-axis title ─────────────────────────────────────────
   ctx.save();
   ctx.translate(12, pad.top + gH / 2);
   ctx.rotate(-Math.PI / 2);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#888';
-  ctx.font = '10px monospace';
+  ctx.textAlign  = 'center';
+  ctx.fillStyle  = '#00ff88';
+  ctx.font       = '10px monospace';
   ctx.fillText('QSOs/hr', 0, 0);
   ctx.restore();
 
-  // Shaded area under line
+  // ── Right Y-axis title ────────────────────────────────────────
+  ctx.save();
+  ctx.translate(W - 6, pad.top + gH / 2);
+  ctx.rotate(Math.PI / 2);
+  ctx.textAlign  = 'center';
+  ctx.fillStyle  = 'rgba(255,180,0,0.7)';
+  ctx.font       = '10px monospace';
+  ctx.fillText('min', 0, 0);
+  ctx.restore();
+
+  // ── Shaded area under rate line ───────────────────────────────
   ctx.beginPath();
   data.forEach((d, i) => {
-    if (i === 0) ctx.moveTo(xPos(0), yPos(d.rate));
-    else ctx.lineTo(xPos(i), yPos(d.rate));
+    if (i === 0) ctx.moveTo(xPos(0), yRate(d.rate));
+    else         ctx.lineTo(xPos(i), yRate(d.rate));
   });
   ctx.lineTo(xPos(data.length - 1), pad.top + gH);
   ctx.lineTo(xPos(0), pad.top + gH);
@@ -24617,37 +24718,50 @@ function renderGraph(category) {
   ctx.fillStyle = 'rgba(0,255,136,0.08)';
   ctx.fill();
 
-  // Line
+  // ── Rate line ─────────────────────────────────────────────────
   ctx.beginPath();
   data.forEach((d, i) => {
-    if (i === 0) ctx.moveTo(xPos(0), yPos(d.rate));
-    else ctx.lineTo(xPos(i), yPos(d.rate));
+    if (i === 0) ctx.moveTo(xPos(0), yRate(d.rate));
+    else         ctx.lineTo(xPos(i), yRate(d.rate));
   });
   ctx.strokeStyle = '#00ff88';
   ctx.lineWidth   = 2;
   ctx.lineJoin    = 'round';
   ctx.stroke();
 
-  // Dots
+  // ── Dots on rate line ─────────────────────────────────────────
+  const bestRate = Math.max(...rates);
   data.forEach((d, i) => {
-    const x = xPos(i), y = yPos(d.rate);
+    const x = xPos(i), y = yRate(d.rate);
     ctx.beginPath();
     ctx.arc(x, y, 3, 0, Math.PI * 2);
     ctx.fillStyle = '#00ff88';
     ctx.fill();
-    // Highlight best
-    if (d.rate === Math.max(...rates)) {
+    if (d.rate === bestRate) {
       ctx.beginPath();
       ctx.arc(x, y, 6, 0, Math.PI * 2);
       ctx.strokeStyle = '#ffd700';
       ctx.lineWidth   = 1.5;
       ctx.stroke();
-      ctx.fillStyle   = '#ffd700';
-      ctx.font        = 'bold 11px monospace';
-      ctx.textAlign   = 'center';
+      ctx.fillStyle  = '#ffd700';
+      ctx.font       = 'bold 11px monospace';
+      ctx.textAlign  = 'center';
       ctx.fillText(d.rate, x, y - 10);
     }
   });
+
+  // ── Legend ────────────────────────────────────────────────────
+  const lx = pad.left + 8, ly = pad.top - 10;
+  ctx.fillStyle = '#00ff88';
+  ctx.fillRect(lx, ly, 14, 3);
+  ctx.fillStyle = '#888';
+  ctx.font      = '9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('QSOs/hr', lx + 18, ly + 4);
+  ctx.fillStyle = 'rgba(255,180,0,0.5)';
+  ctx.fillRect(lx + 72, ly - 3, 10, 8);
+  ctx.fillStyle = '#888';
+  ctx.fillText('session time', lx + 86, ly + 4);
 }
 
 // ============================================================
@@ -25342,7 +25456,8 @@ async function fullSyncFromSupabase(callsign) {
     if (logsAdded  > 0) parts.push(`${logsAdded} log${logsAdded !== 1 ? 's' : ''}`);
     showSyncStatus(parts.length ? `✓ Synced ${parts.join(', ')}` : '✓ Up to date');
     console.log(`CQ Trainer sync: ${parts.join(', ') || 'already up to date'}`);
-    fetchCommunityHighlights(); // refresh banner after sync
+    renderPracticeStats();        // refresh avg practice time
+    fetchCommunityHighlights();   // refresh banner after sync
 
   } catch(err) {
     console.warn('Supabase full sync failed:', err);
@@ -25896,6 +26011,7 @@ function endSession() {
     $('lbtab-manage').style.display    = 'none';
     $('lbtab-analysis').style.display  = 'none';
     renderLeaderboard(cat, isNew ? rate : null);
+    renderPracticeStats();
   }
 }
 
@@ -27142,6 +27258,7 @@ $('lb-category-select').addEventListener('change', () => {
 
 // Initialize leaderboard to callsigns on load
 renderLeaderboard('callsigns');
+renderPracticeStats();
 
 // Re-sync when user returns to the tab (handles leaving the app open for days)
 document.addEventListener('visibilitychange', () => {
