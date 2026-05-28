@@ -383,12 +383,12 @@
   .analysis-note { font-size: 0.72rem; color: var(--muted); margin-bottom: 8px; font-style: italic; }
   .analysis-sublabel { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin: 4px 0 4px 0; }
   /* Community activity banner */
-  #community-banner { background: var(--accent); border-bottom: 1px solid var(--border); padding: 5px 10px; font-size: 0.7rem; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
-  .community-banner-title { color: var(--yellow); font-weight: bold; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; margin-right: 4px; }
-  .community-score-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 2px 7px; }
-  .community-score-chip .cs-call { font-weight: bold; color: var(--green); letter-spacing: 0.5px; }
-  .community-score-chip .cs-rate { color: var(--yellow); }
-  .community-score-chip .cs-mode { color: var(--muted); font-size: 0.64rem; }
+  #community-banner { background: var(--accent); border-bottom: 1px solid var(--border); padding: 6px 10px; font-size: 0.82rem; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .community-banner-title { color: var(--yellow); font-weight: bold; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; margin-right: 4px; }
+  .community-score-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 3px 9px; }
+  .community-score-chip .cs-call { font-weight: bold; color: var(--green); letter-spacing: 0.5px; font-size: 0.85rem; }
+  .community-score-chip .cs-rate { color: var(--yellow); font-size: 0.82rem; }
+  .community-score-chip .cs-mode { color: var(--muted); font-size: 0.72rem; }
   .lb-mode-chip { font-size: 0.65rem; color: var(--muted); background: var(--bg); border: 1px solid var(--border); border-radius: 2px; padding: 1px 4px; white-space: nowrap; }
   /* Practice stats strip */
   #practice-stats-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 5px 10px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 0.68rem; }
@@ -996,7 +996,9 @@
 
       <!-- Graph -->
       <div id="lbtab-graph" style="display:none">
-        <canvas id="lb-graph-canvas" height="220"></canvas>
+        <canvas id="lb-graph-canvas" height="180"></canvas>
+        <div style="font-size:0.62rem;text-transform:uppercase;letter-spacing:0.8px;color:var(--muted);padding:4px 10px 2px;border-top:1px solid var(--border);margin-top:2px">Daily Practice Time — All Categories</div>
+        <canvas id="lb-graph-canvas2" height="130"></canvas>
       </div>
 
       <!-- Analysis — weakness detection -->
@@ -24432,14 +24434,14 @@ function renderPracticeStats() {
   const now    = Date.now();
   const DAY_MS = 86400000;
 
-  // 30-day average (includes zero days)
-  const cutoff30   = now - 30 * DAY_MS;
-  const sec30      = allSessions.filter(e => e.ts >= cutoff30).reduce((s, e) => s + e.dur, 0);
-  const avg30      = sec30 / 30;
+  // Average per day since first session (includes zero days, but only days we actually know about)
+  const earliest  = Math.min(...allSessions.map(e => e.ts));
+  const daysSince = Math.max(1, Math.ceil((now - earliest) / DAY_MS));
+  const secAll    = allSessions.reduce((s, e) => s + e.dur, 0);
+  const avgDaily  = secAll / daysSince;
 
   // Active-day average (only days with sessions)
-  const daySet = new Set(allSessions.map(e => new Date(e.ts).toDateString()));
-  const secAll = allSessions.reduce((s, e) => s + e.dur, 0);
+  const daySet    = new Set(allSessions.map(e => new Date(e.ts).toDateString()));
   const avgActive = secAll / daySet.size;
 
   // Current streak
@@ -24466,7 +24468,7 @@ function renderPracticeStats() {
   }
 
   el.innerHTML =
-    `<span class="pstat"><span class="pstat-label">30d avg</span><span class="pstat-val">${fmtMin(avg30)}/day</span></span>` +
+    `<span class="pstat"><span class="pstat-label">avg/day</span><span class="pstat-val">${fmtMin(avgDaily)}/day</span></span>` +
     `<span class="pstat-sep">·</span>` +
     `<span class="pstat"><span class="pstat-label">when active</span><span class="pstat-val">${fmtMin(avgActive)}/day</span></span>` +
     `<span class="pstat-sep">·</span>` +
@@ -24627,141 +24629,141 @@ function renderGraph(category) {
     return;
   }
 
-  // Leave room for right Y-axis (duration) and left Y-axis (rate)
-  const pad  = { top: 28, right: 46, bottom: 36, left: 52 };
+  // ── Top chart: QSOs/hr per session (this category) ──────────
+  const pad  = { top: 20, right: 20, bottom: 36, left: 52 };
   const gW   = W - pad.left - pad.right;
   const gH   = H - pad.top  - pad.bottom;
 
   const rates = data.map(d => d.rate);
-  const durs  = data.map(d => (d.dur || 0) / 60); // seconds → minutes
   const minR  = Math.max(0, Math.min(...rates) - 10);
   const maxR  = Math.max(...rates) + 10;
-  const maxD  = Math.max(...durs, 1);
 
-  function xPos(i)    { return pad.left + (i / (data.length - 1)) * gW; }
-  function yRate(r)   { return pad.top  + gH - ((r - minR) / (maxR - minR)) * gH; }
-  function yDur(d)    { return pad.top  + gH - (d / maxD) * gH; }
+  function xPos(i)  { return pad.left + (i / (data.length - 1)) * gW; }
+  function yRate(r) { return pad.top  + gH - ((r - minR) / (maxR - minR)) * gH; }
 
-  // ── Duration bars (drawn first, behind everything) ────────────
-  const barW = Math.max(2, (gW / data.length) * 0.55);
-  data.forEach((d, i) => {
-    const mins   = (d.dur || 0) / 60;
-    const x      = xPos(i);
-    const barTop = yDur(mins);
-    const barBot = pad.top + gH;
-    ctx.fillStyle = 'rgba(255,180,0,0.18)';
-    ctx.fillRect(x - barW / 2, barTop, barW, barBot - barTop);
-    ctx.strokeStyle = 'rgba(255,180,0,0.45)';
-    ctx.lineWidth   = 1;
-    ctx.strokeRect(x - barW / 2, barTop, barW, barBot - barTop);
-  });
-
-  // ── Grid lines ────────────────────────────────────────────────
+  // Grid lines
   const steps = 5;
-  ctx.strokeStyle = '#2a3a5a';
-  ctx.lineWidth   = 1;
+  ctx.strokeStyle = '#2a3a5a'; ctx.lineWidth = 1;
   for (let s = 0; s <= steps; s++) {
     const r = minR + ((maxR - minR) * s / steps);
     const y = yRate(r);
     ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + gW, y); ctx.stroke();
-    // Left axis: QSOs/hr
-    ctx.fillStyle  = '#888';
-    ctx.font       = '10px monospace';
-    ctx.textAlign  = 'right';
+    ctx.fillStyle = '#888'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
     ctx.fillText(Math.round(r), pad.left - 6, y + 3);
-    // Right axis: minutes
-    const dLabel = Math.round((maxD / steps) * s);
-    ctx.fillStyle = 'rgba(255,180,0,0.7)';
-    ctx.textAlign = 'left';
-    ctx.fillText(dLabel + 'm', pad.left + gW + 5, y + 3);
   }
 
-  // ── X-axis date labels ────────────────────────────────────────
-  ctx.fillStyle  = '#888';
-  ctx.font       = '10px monospace';
-  ctx.textAlign  = 'center';
+  // X-axis date labels
+  ctx.fillStyle = '#888'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
   const labelEvery = Math.max(1, Math.floor(data.length / 8));
   data.forEach((d, i) => {
     if (i % labelEvery === 0 || i === data.length - 1)
       ctx.fillText(d.date, xPos(i), H - 6);
   });
 
-  // ── Left Y-axis title ─────────────────────────────────────────
-  ctx.save();
-  ctx.translate(12, pad.top + gH / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.textAlign  = 'center';
-  ctx.fillStyle  = '#00ff88';
-  ctx.font       = '10px monospace';
-  ctx.fillText('QSOs/hr', 0, 0);
-  ctx.restore();
+  // Left Y-axis title
+  ctx.save(); ctx.translate(12, pad.top + gH / 2); ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#888'; ctx.font = '10px monospace';
+  ctx.fillText('QSOs/hr', 0, 0); ctx.restore();
 
-  // ── Right Y-axis title ────────────────────────────────────────
-  ctx.save();
-  ctx.translate(W - 6, pad.top + gH / 2);
-  ctx.rotate(Math.PI / 2);
-  ctx.textAlign  = 'center';
-  ctx.fillStyle  = 'rgba(255,180,0,0.7)';
-  ctx.font       = '10px monospace';
-  ctx.fillText('min', 0, 0);
-  ctx.restore();
-
-  // ── Shaded area under rate line ───────────────────────────────
+  // Shaded area
   ctx.beginPath();
-  data.forEach((d, i) => {
-    if (i === 0) ctx.moveTo(xPos(0), yRate(d.rate));
-    else         ctx.lineTo(xPos(i), yRate(d.rate));
-  });
-  ctx.lineTo(xPos(data.length - 1), pad.top + gH);
-  ctx.lineTo(xPos(0), pad.top + gH);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(0,255,136,0.08)';
-  ctx.fill();
+  data.forEach((d, i) => { i === 0 ? ctx.moveTo(xPos(0), yRate(d.rate)) : ctx.lineTo(xPos(i), yRate(d.rate)); });
+  ctx.lineTo(xPos(data.length - 1), pad.top + gH); ctx.lineTo(xPos(0), pad.top + gH);
+  ctx.closePath(); ctx.fillStyle = 'rgba(0,255,136,0.08)'; ctx.fill();
 
-  // ── Rate line ─────────────────────────────────────────────────
+  // Rate line
   ctx.beginPath();
-  data.forEach((d, i) => {
-    if (i === 0) ctx.moveTo(xPos(0), yRate(d.rate));
-    else         ctx.lineTo(xPos(i), yRate(d.rate));
-  });
-  ctx.strokeStyle = '#00ff88';
-  ctx.lineWidth   = 2;
-  ctx.lineJoin    = 'round';
-  ctx.stroke();
+  data.forEach((d, i) => { i === 0 ? ctx.moveTo(xPos(0), yRate(d.rate)) : ctx.lineTo(xPos(i), yRate(d.rate)); });
+  ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
 
-  // ── Dots on rate line ─────────────────────────────────────────
+  // Dots
   const bestRate = Math.max(...rates);
   data.forEach((d, i) => {
     const x = xPos(i), y = yRate(d.rate);
-    ctx.beginPath();
-    ctx.arc(x, y, 3, 0, Math.PI * 2);
-    ctx.fillStyle = '#00ff88';
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#00ff88'; ctx.fill();
     if (d.rate === bestRate) {
-      ctx.beginPath();
-      ctx.arc(x, y, 6, 0, Math.PI * 2);
-      ctx.strokeStyle = '#ffd700';
-      ctx.lineWidth   = 1.5;
-      ctx.stroke();
-      ctx.fillStyle  = '#ffd700';
-      ctx.font       = 'bold 11px monospace';
-      ctx.textAlign  = 'center';
+      ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = '#ffd700'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
       ctx.fillText(d.rate, x, y - 10);
     }
   });
 
-  // ── Legend ────────────────────────────────────────────────────
-  const lx = pad.left + 8, ly = pad.top - 10;
-  ctx.fillStyle = '#00ff88';
-  ctx.fillRect(lx, ly, 14, 3);
-  ctx.fillStyle = '#888';
-  ctx.font      = '9px monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText('QSOs/hr', lx + 18, ly + 4);
-  ctx.fillStyle = 'rgba(255,180,0,0.5)';
-  ctx.fillRect(lx + 72, ly - 3, 10, 8);
-  ctx.fillStyle = '#888';
-  ctx.fillText('session time', lx + 86, ly + 4);
+  // ── Bottom chart: daily practice time (ALL categories) ────────
+  const canvas2 = $('lb-graph-canvas2');
+  if (!canvas2) return;
+  const ctx2 = canvas2.getContext('2d');
+  const W2   = canvas2.offsetWidth || 600;
+  const H2   = canvas2.height;
+  canvas2.width = W2;
+  ctx2.clearRect(0, 0, W2, H2);
+
+  // Aggregate all history by calendar day
+  const hist2    = loadHistory();
+  const dayTotals = {}; // 'May 1, 25' → seconds
+  Object.values(hist2).forEach(entries => {
+    (entries || []).forEach(e => {
+      if (e.ts && e.dur > 0) {
+        const day = new Date(e.ts).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'2-digit' });
+        dayTotals[day] = (dayTotals[day] || 0) + e.dur;
+      }
+    });
+  });
+
+  // Sort by date ascending, take last 60 days
+  const dayData = Object.entries(dayTotals)
+    .map(([day, sec]) => ({ day, mins: sec / 60 }))
+    .sort((a, b) => new Date(a.day) - new Date(b.day))
+    .slice(-60);
+
+  if (dayData.length < 2) {
+    ctx2.fillStyle = '#888'; ctx2.font = '12px monospace'; ctx2.textAlign = 'center';
+    ctx2.fillText('Practice more sessions to see daily time trend.', W2 / 2, H2 / 2);
+    return;
+  }
+
+  const pad2  = { top: 16, right: 20, bottom: 30, left: 52 };
+  const gW2   = W2 - pad2.left - pad2.right;
+  const gH2   = H2 - pad2.top  - pad2.bottom;
+  const maxM  = Math.max(...dayData.map(d => d.mins), 1);
+
+  function xPos2(i)  { return pad2.left + (i / (dayData.length - 1)) * gW2; }
+  function yMins(m)  { return pad2.top  + gH2 - (m / maxM) * gH2; }
+
+  // Grid
+  ctx2.strokeStyle = '#2a3a5a'; ctx2.lineWidth = 1;
+  for (let s = 0; s <= 4; s++) {
+    const m = (maxM / 4) * s;
+    const y = yMins(m);
+    ctx2.beginPath(); ctx2.moveTo(pad2.left, y); ctx2.lineTo(pad2.left + gW2, y); ctx2.stroke();
+    ctx2.fillStyle = '#888'; ctx2.font = '10px monospace'; ctx2.textAlign = 'right';
+    ctx2.fillText(Math.round(m) + 'm', pad2.left - 4, y + 3);
+  }
+
+  // X-axis date labels
+  ctx2.fillStyle = '#888'; ctx2.font = '10px monospace'; ctx2.textAlign = 'center';
+  const le2 = Math.max(1, Math.floor(dayData.length / 8));
+  dayData.forEach((d, i) => {
+    if (i % le2 === 0 || i === dayData.length - 1)
+      ctx2.fillText(d.day, xPos2(i), H2 - 4);
+  });
+
+  // Shaded area
+  ctx2.beginPath();
+  dayData.forEach((d, i) => { i === 0 ? ctx2.moveTo(xPos2(0), yMins(d.mins)) : ctx2.lineTo(xPos2(i), yMins(d.mins)); });
+  ctx2.lineTo(xPos2(dayData.length - 1), pad2.top + gH2); ctx2.lineTo(xPos2(0), pad2.top + gH2);
+  ctx2.closePath(); ctx2.fillStyle = 'rgba(255,180,0,0.1)'; ctx2.fill();
+
+  // Line
+  ctx2.beginPath();
+  dayData.forEach((d, i) => { i === 0 ? ctx2.moveTo(xPos2(0), yMins(d.mins)) : ctx2.lineTo(xPos2(i), yMins(d.mins)); });
+  ctx2.strokeStyle = 'rgba(255,180,0,0.9)'; ctx2.lineWidth = 2; ctx2.lineJoin = 'round'; ctx2.stroke();
+
+  // Dots
+  dayData.forEach((d, i) => {
+    ctx2.beginPath(); ctx2.arc(xPos2(i), yMins(d.mins), 2.5, 0, Math.PI * 2);
+    ctx2.fillStyle = 'rgba(255,180,0,0.9)'; ctx2.fill();
+  });
 }
 
 // ============================================================
